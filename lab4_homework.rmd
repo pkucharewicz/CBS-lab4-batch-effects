@@ -1,0 +1,264 @@
+---
+title: "Lab 4 homework"
+author: "Paulina Kucharewicz"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r load_hidden, echo=FALSE, results="hide", warning=FALSE}
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(devtools)
+  library(Biobase)
+  library(sva)
+  library(bladderbatch)
+  library(broom)
+  library(tidyverse)
+})
+```
+
+```{r load}
+  library(devtools)
+  library(Biobase)
+  library(sva)
+  library(bladderbatch)
+  library(broom)
+  library(tidyverse)
+  library(data.table)
+```
+
+# Working with bladderbatch data
+```{r}
+library(bladderbatch)
+data(bladderdata)
+
+# sample info
+pheno = pData(bladderEset)
+# expression data
+edata = exprs(bladderEset)
+row.variances <- apply(edata, 1, function(x) var(x))
+edata <- edata[row.variances < 6,]
+edata.log <- log2(edata)
+edata.scaled <- t(scale(t(edata.log), scale=TRUE, center=TRUE))
+```
+
+> *Homework Problem 1:*
+> Create a table to show the batch effects (refer to Figure 1 in Gilad and Mizrahi-Man, 2015). There are 5 batches (`pheno$batch`); how are biological variables and other variables related to study design are distributed among those 5 batches? Explain what could be a problem. Prepare this into a PDF file.
+
+```{r}
+batch_outcome <- table(pheno$outcome,pheno$batch)
+batch_cancer <- table(pheno$cancer,pheno$batch)
+batch_table <- list()
+
+for(i in unique(pheno$batch)){batch_table <- append(batch_table,list(pheno[pheno$batch==i,]$outcome))}
+#names(batch_table) <-c("batch 1","batch 2","batch 3","batch 4","batch 5")
+
+#https://stackoverflow.com/questions/43415577/equalizing-the-lengths-of-all-the-lists-within-a-list
+batch_table <- Map(function(x, y){c(as.character(x), rep(NA, y))}, 
+                   batch_table, 
+                   max(lengths(batch_table)) - lengths(batch_table))
+
+batch_table <- data.frame(batch_table)
+colnames(batch_table) <- c("batch 1","batch 2","batch 3","batch 4","batch 5")
+options(knitr.kable.NA = '')
+knitr::kable(batch_table)
+```
+
+
+```{r}
+combat_edata = ComBat(dat=edata, batch=pheno$batch, mod=model.matrix(~1, data=pheno), par.prior=TRUE, prior.plots=TRUE)
+```
+
+
+> *Homework Problem 2:*
+> Make heatmaps, BEFORE and AFTER cleaning the data using ComBat, where columns are arranged according to the study design. You must sort the columns such that 5 batches are shown. Cluster the rows, but do not cluster the columns (samples) when drawing a heatmap. The general idea is that you want to see if the Combat-cleaned data are any improvement in the general patterns.
+
+```{r}
+
+#order columns according to batch number
+edata_sorted <- as.data.frame(rbind(edata, batch=pheno[colnames(edata),]$batch))
+edata_sorted <- edata_sorted[,order(edata_sorted[nrow(edata_sorted),])]
+
+combat_edata_sorted = as.data.frame(rbind(combat_edata, batch=pheno[colnames(combat_edata),]$batch))
+combat_edata_sorted <- combat_edata_sorted[,order(combat_edata_sorted[nrow(combat_edata_sorted),])]
+
+colnames(edata_sorted) <- as.character(edata_sorted[nrow(edata_sorted),])
+colnames(combat_edata_sorted) <- as.character(combat_edata_sorted[nrow(combat_edata_sorted),])
+
+#remove batch row
+edata_sorted <- data.matrix(head(edata_sorted,-1))
+combat_edata_sorted <- data.matrix(head(combat_edata_sorted,-1))
+
+```
+
+```{r}
+## compare heatmaps before vs. after
+library(gplots)
+library(RColorBrewer)
+my_palette <- colorRampPalette(c("blue", "white", "darkred"))(n = 299)
+
+png("Kucharewicz_problem2_before.png",height=700,width=700)
+heatmap.2(edata_sorted,
+          main = "Bladder Cancer Data Clustered before ComBat", # heat map title
+          notecol="black",      # change font color of cell labels to black
+          density.info="none",  # turns off density plot inside color legend
+          trace="none",         # turns off trace lines inside the heat map
+          margins =c(12,9),     # widens margins around plot
+          col=my_palette,       # use on color palette defined earlier 
+          dendrogram="none",     # only draw a row dendrogram
+          Colv=FALSE)
+dev.off()
+
+png("Kucharewicz_problem2_after.png",height=700,width=700)
+heatmap.2(combat_edata_sorted,
+          main = "Bladder Cancer Data Clustered after ComBat", # heat map title
+          notecol="black",      # change font color of cell labels to black
+          density.info="none",  # turns off density plot inside color legend
+          trace="none",         # turns off trace lines inside the heat map
+          margins =c(12,9),     # widens margins around plot
+          col=my_palette,       # use on color palette defined earlier 
+          dendrogram="none",     # only draw a row dendrogram
+          Colv=FALSE)
+dev.off()
+```
+
+> *Homework Problem 3:*
+> Make heatmaps of Pearson correlations statistics of samples. For example, see Figure 2 and 3 freom Gilad and Mizrahi-Man (2015) F1000Research: \url{https://f1000research.com/articles/4-121}.
+> First, compute the correlation statistics among columns. Second, create a heatmap using heatmap.2(). Make sure to create or add labels for samples (cancer vs. normal; batch numbers; others)
+
+#labels: batch, outcome
+
+```{r}
+combat_edata_alt <- as.data.frame(rbind(combat_edata, batch=pheno[colnames(combat_edata),]$batch))
+
+combat_edata_alt <- combat_edata_alt[,order(combat_edata_alt[nrow(combat_edata_alt),])]
+
+colnames(combat_edata_alt) <- paste(as.character(pheno[colnames(combat_edata_alt),]$batch), as.character(pheno[colnames(combat_edata_alt),]$outcome), sep=", ")
+combat_edata_alt <- head(combat_edata_alt,-1)
+combat_edata_cor = cor(combat_edata_alt, method='pearson')
+
+my_palette <- colorRampPalette(c("blue", "white", "darkred"))(n = 299)
+
+png("Kucharewicz_problem3_combat.png",height=1000,width=1000)
+
+heatmap.2(combat_edata_cor,
+          main = "Bladder Cancer Data correlations of samples (after Combat)", # heat map title
+          notecol="black",      # change font color of cell labels to black
+          density.info="none",  # turns off density plot inside color legend
+          trace="none",         # turns off trace lines inside the heat map
+          margins =c(12,9), # widens margins around plot
+          col=my_palette,       # use on color palette defined earlier 
+          dendrogram="none",     # only draw a row dendrogram
+          Colv=FALSE,
+          Rowv=FALSE)
+dev.off()
+
+```
+```{r}
+edata_alt <- as.data.frame(rbind(edata, batch=pheno[colnames(edata),]$batch))
+
+edata_alt <- edata_alt[,order(edata_alt[nrow(edata_alt),])]
+
+colnames(edata_alt) <- paste(as.character(pheno[colnames(edata_alt),]$batch), as.character(pheno[colnames(edata_alt),]$outcome), sep=", ")
+edata_alt <- head(edata_alt,-1)
+edata_cor = cor(edata_alt, method='pearson')
+
+png("Kucharewicz_problem3.png",height=1000,width=1000)
+
+heatmap.2(edata_cor,
+          main = "Bladder Cancer Data correlations of samples", # heat map title
+          notecol="black",      # change font color of cell labels to black
+          density.info="none",  # turns off density plot inside color legend
+          trace="none",         # turns off trace lines inside the heat map
+          margins =c(12,9),     # widens margins around plot
+          col=my_palette,       # use on color palette defined earlier 
+          dendrogram="none",     # only draw a row dendrogram
+          Colv=FALSE,
+          Rowv=FALSE)
+dev.off()
+```
+
+# Working with Bottomly et al. data
+```{r}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bottomly_eset.RData")
+load(file=con)
+close(con)
+save(bottomly.eset, file="bottomly.Rdata")
+
+load(file="bottomly.Rdata")
+edata <- as.matrix(exprs(bottomly.eset))
+edata <- edata[rowMeans(edata) > 10, ]
+edata <- log2(as.matrix(edata) + 1)
+pheno=pData(bottomly.eset)
+combat_edata = ComBat(dat=edata, batch=pheno$experiment.number, mod=model.matrix(~1, data=pheno), par.prior=TRUE, prior.plots=TRUE)
+```
+
+> *Homework Problem 4:*
+> Apply two different Linear Models to the Bottomly et al. data. First, using a conventional approach, create a linear model with a genetic strain (biological variable) and an experimental number (technical variable) on **uncorrected** gene expression data. Second, create a linear model with a genetic strain (biological variables) on **corrected** gene expression data from ComBat. Make a scatter plots of coefficients and a histogram of p-values as done in this notebook. Make sure that you are pulling out the correct coefficients, not any or all coefficients. 
+
+```{r}
+mod = lm(t(edata) ~ as.factor(pheno$strain) + as.factor(pheno$experiment.number))
+modcombat = lm(t(combat_edata) ~ as.factor(pheno$strain))
+```
+
+```{r}
+library(broom)
+library(patchwork)
+
+modcombat_tidy <- tidy(modcombat)
+mod_tidy <- tidy(mod)
+
+est_compare <- tibble(
+  LinearModel = mod_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("estimate") %>% unlist,
+  ComBat = modcombat_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("estimate") %>% unlist)
+
+p1 <- ggplot(est_compare, aes(x=LinearModel, y=ComBat)) +
+     geom_point(col="darkgrey", alpha=.5, size=.5) + geom_abline(intercept=0, slope=1, col="darkred") + geom_smooth(method = "lm", se = TRUE) + theme_bw() + ggtitle('LM coefficients')
+
+p2 <- ggplot(modcombat_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J")) + geom_histogram(aes(x=p.value), bins = 100, fill="darkorange") + ggtitle('Combat - p-values')
+
+p3 <- ggplot(modcombat_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J")) + geom_histogram(aes(x=p.value), bins = 100, fill="darkorange") + ggtitle('Linear model - p-values')
+
+png("Kucharewicz_problem4.png",height=400,width=1000)
+
+p1+p2+p3
+
+dev.off()
+```
+> *Homework Problem 5:*
+> Apply ComBat and SVA to the Bottomly et al. data. Make a scatter plots of coefficients and a histogram of p-values, comparing results based on ComBat and SVA. Assume that the biological variables in Bottomly et al data is the genetic strains. Make sure that you are pulling out the correct coefficients/pvalues, not any or all of them.
+
+```{r}
+mod = model.matrix(~as.factor(strain),data=pheno)
+mod0 = model.matrix(~1, data=pheno)
+sva_output = sva(edata, mod, mod0, n.sv=num.sv(edata,mod,method="leek"))
+
+modsva = lm(t(edata) ~ as.factor(pheno$strain) + sva_output$sv)
+modsva_tidy <- tidy(modsva)
+
+est_compare <- tibble(
+  ComBat = modcombat_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("estimate") %>% unlist,
+  SVA = modsva_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("estimate") %>% unlist)
+
+p1 <- ggplot(est_compare, aes(x=ComBat, y=SVA)) +
+     geom_point(col="darkgrey", alpha=.5, size=.5) + geom_abline(intercept=0, slope=1, col="darkred") + geom_smooth(method = "lm", se = TRUE) + theme_bw() + ggtitle('Linear models with sva and combat coefficients')
+
+p2 <- ggplot(modsva_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J")) + geom_histogram(aes(x=p.value), bins = 100, fill="darkorange")+ggtitle('Linear model with sva - p.values')
+
+png("Kucharewicz_problem5.png",height=600,width=1000)
+
+p1+p2
+
+dev.off()
+```
+```{r}
+pvalues <- tibble(
+  LinearModel = mod_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("p.value") %>% unlist,
+  ComBat = modcombat_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("p.value") %>% unlist,
+  SVA = modsva_tidy %>% filter(term == "as.factor(pheno$strain)DBA/2J") %>% select("p.value") %>% unlist)
+
+pvalues_gather <- gather(pvalues)
+ggplot(pvalues_gather, aes(x=value)) + geom_histogram() + facet_wrap(~key)  + ggtitle('P-values for linear models')
+```
